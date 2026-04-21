@@ -1,0 +1,27 @@
+services:
+  dom6-bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - dom6_data:/data
+    # Conservative resource limits for Oracle Cloud Always Free AMD Micro
+    # (1/8 OCPU, 1 GB RAM shared across all containers on the instance)
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.10"
+        reservations:
+          memory: 64M
+          cpus: "0.05"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  dom6_data:
+    driver: local
