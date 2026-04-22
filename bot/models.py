@@ -61,3 +61,4 @@ class GameConfig:
     warnings_sent_turn: int = 0
     warnings_sent_flags: int = 0
     is_active: bool = True
+    status_message_id: Optional[int] = None

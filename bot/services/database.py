@@ -64,6 +64,7 @@ class Database:
                 failure_notified    INTEGER NOT NULL DEFAULT 0,
                 warnings_sent_turn  INTEGER NOT NULL DEFAULT 0,
                 warnings_sent_flags INTEGER NOT NULL DEFAULT 0,
+                status_message_id   INTEGER,
                 is_active           INTEGER NOT NULL DEFAULT 1,
                 FOREIGN KEY (guild_id) REFERENCES guilds(guild_id),
                 UNIQUE (guild_id, alias)
@@ -102,6 +103,7 @@ class Database:
             "ALTER TABLE nation_status ADD COLUMN claimed_by_name TEXT",
             "ALTER TABLE games ADD COLUMN warnings_sent_turn INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE games ADD COLUMN warnings_sent_flags INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE games ADD COLUMN status_message_id INTEGER",
         ]
         for sql in new_columns:
             try:
@@ -271,6 +273,13 @@ class Database:
         )
         await self._db.commit()
 
+    async def set_status_message_id(self, game_id: int, message_id: Optional[int]) -> None:
+        await self._db.execute(
+            "UPDATE games SET status_message_id = ? WHERE id = ?",
+            (message_id, game_id),
+        )
+        await self._db.commit()
+
     async def increment_failure(self, game_id: int) -> int:
         await self._db.execute(
             "UPDATE games SET consecutive_failures = consecutive_failures + 1 WHERE id = ?",
@@ -397,4 +406,5 @@ def _row_to_game(row: aiosqlite.Row) -> GameConfig:
         warnings_sent_turn=row["warnings_sent_turn"],
         warnings_sent_flags=row["warnings_sent_flags"],
         is_active=bool(row["is_active"]),
+        status_message_id=row["status_message_id"],
     )
