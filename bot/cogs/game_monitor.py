@@ -652,47 +652,64 @@ class GameMonitor(commands.Cog):
             f"Claim on **{_short_name(nation.name)}** in **{game_name}** released.", ephemeral=True
         )
 
-    @app_commands.command(name="flagai", description="Flag a nation as AI-controlled (excluded from 'waiting on' count).")
+    @app_commands.command(name="flagai", description="Flag one or more nations as AI-controlled (excluded from 'waiting on' count).")
     @app_commands.describe(
         game_name="Game name",
-        nation_number="Nation number shown in /status",
+        nation_numbers="Nation number(s) shown in /status — separate multiple with commas (e.g. 1,3,5)",
     )
     @app_commands.guild_only()
     async def flag_ai(
         self,
         interaction: discord.Interaction,
         game_name: str,
-        nation_number: int,
+        nation_numbers: str,
     ) -> None:
         game = await self._resolve_game(interaction, game_name)
         if game is None:
             return
 
-        nation = await self.db.get_nation_by_position(game.id, nation_number)
-        if nation is None:
+        try:
+            positions = [int(p.strip()) for p in nation_numbers.split(",") if p.strip()]
+        except ValueError:
             await interaction.response.send_message(
-                f"No nation #{nation_number} in **{game_name}**. "
-                f"Use `/status game_name:{game_name}` to see the numbered list.",
-                ephemeral=True,
+                "Nation numbers must be integers separated by commas (e.g. `1,3,5`).", ephemeral=True
             )
             return
 
-        if nation.is_ai:
-            await interaction.response.send_message(
-                f"**{_short_name(nation.name)}** is already flagged as AI.", ephemeral=True
-            )
+        if not positions:
+            await interaction.response.send_message("Please provide at least one nation number.", ephemeral=True)
             return
 
-        await self.db.set_nation_ai(game.id, nation_number, True)
-        # Clear any existing claim since AI slots aren't player-controlled
-        if nation.claimed_by_id:
-            await self.db.set_nation_claim(game.id, nation_number, None, None)
+        await interaction.response.defer(ephemeral=True)
 
-        logger.info("Nation flagged AI: %s #%d (guild %d)", game_name, nation_number, interaction.guild_id)
-        await interaction.response.send_message(
-            f"**{_short_name(nation.name)}** in **{game_name}** flagged as AI. "
-            f"It will appear with 🤖 and won't count toward pending turns."
-        )
+        flagged, already_ai, not_found = [], [], []
+        for pos in positions:
+            nation = await self.db.get_nation_by_position(game.id, pos)
+            if nation is None:
+                not_found.append(str(pos))
+                continue
+            if nation.is_ai:
+                already_ai.append(_short_name(nation.name))
+                continue
+            await self.db.set_nation_ai(game.id, pos, True)
+            if nation.claimed_by_id:
+                await self.db.set_nation_claim(game.id, pos, None, None)
+            flagged.append(_short_name(nation.name))
+
+        logger.info("Nations flagged AI: %s %s (guild %d)", game_name, positions, interaction.guild_id)
+
+        lines = []
+        if flagged:
+            names = ", ".join(f"**{n}**" for n in flagged)
+            lines.append(f"Flagged as AI in **{game_name}**: {names}. They will appear with 🤖 and won't count toward pending turns.")
+        if already_ai:
+            names = ", ".join(f"**{n}**" for n in already_ai)
+            lines.append(f"Already flagged as AI: {names}.")
+        if not_found:
+            nums = ", ".join(f"`#{n}`" for n in not_found)
+            lines.append(f"Not found: {nums} — use `/status game_name:{game_name}` to see the numbered list.")
+
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
 
     @app_commands.command(name="unflagai", description="Remove the AI flag from a nation.")
     @app_commands.describe(
