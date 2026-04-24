@@ -16,12 +16,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy bot source
 COPY bot/ bot/
 
-# Create non-root user and data directory
-RUN useradd --no-create-home --shell /bin/false botuser \
-    && mkdir -p /data \
-    && chown botuser:botuser /data
-
-USER botuser
+# Ensure data directory exists
+RUN mkdir -p /data
 
 # The bot makes only outbound connections — no ports to expose
 CMD ["python", "-m", "bot.main"]
