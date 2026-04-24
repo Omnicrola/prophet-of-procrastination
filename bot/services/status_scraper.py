@@ -35,9 +35,9 @@ _IW_HEADER_RE = re.compile(
     r"^(.+?),\s*turn\s+(\d+)\s*\(time left:\s*(.+?)\)\s*$",
     re.IGNORECASE,
 )
-# Time string inside the header: "22 hours and 49 minutes", "1 hour", "30 minutes", etc.
+# Time string inside the header: "1 day and 3 hours", "22 hours and 49 minutes", "30 minutes", etc.
 _IW_TIME_RE = re.compile(
-    r"(?:(\d+)\s*hours?)?\s*(?:and\s*)?(?:(\d+)\s*minutes?)?",
+    r"(?:(\d+)\s*days?)?\s*(?:and\s*)?(?:(\d+)\s*hours?)?\s*(?:and\s*)?(?:(\d+)\s*minutes?)?",
     re.IGNORECASE,
 )
 _IW_DATA_CLASSES = {"whitedata", "lightgreydata", "blackdata", "greydata"}
@@ -162,16 +162,19 @@ def _parse_illwinter(soup: BeautifulSoup) -> Optional[GameState]:
 
 
 def _parse_illwinter_time(raw: str) -> tuple[Optional[str], Optional[int]]:
-    """Parse "22 hours and 49 minutes", "1 hour", "30 minutes", etc."""
+    """Parse "1 day and 3 hours", "22 hours and 49 minutes", "1 hour", "30 minutes", etc."""
     m = _IW_TIME_RE.search(raw)
     if not m or not any(m.groups()):
         return raw or None, None
 
-    hours = int(m.group(1) or 0)
-    mins = int(m.group(2) or 0)
-    total_seconds = hours * 3600 + mins * 60
+    days = int(m.group(1) or 0)
+    hours = int(m.group(2) or 0)
+    mins = int(m.group(3) or 0)
+    total_seconds = days * 86400 + hours * 3600 + mins * 60
 
     parts = []
+    if days:
+        parts.append(f"{days}d")
     if hours:
         parts.append(f"{hours}h")
     if mins:

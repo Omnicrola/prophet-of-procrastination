@@ -239,13 +239,19 @@ class GameMonitor(commands.Cog):
             return
         channel = self.bot.get_channel(guild_cfg.report_channel_id)
         if channel is None:
+            logger.warning(
+                "Status embed update skipped for %s: channel %s not found in cache",
+                game.alias, guild_cfg.report_channel_id,
+            )
             return
 
         embed = _build_status_embed(game, state, db_nations)
 
         if game.status_message_id:
             try:
-                message = await channel.fetch_message(game.status_message_id)
+                # get_partial_message avoids a fetch (no READ_MESSAGE_HISTORY needed).
+                # edit() raises NotFound if deleted, Forbidden if uneditable.
+                message = channel.get_partial_message(game.status_message_id)
                 await message.edit(embed=embed)
                 return
             except discord.NotFound:
@@ -264,6 +270,11 @@ class GameMonitor(commands.Cog):
         self, game: GameConfig, state: GameState, db_nations: list[NationStatus]
     ) -> None:
         if state.time_remaining_seconds is None:
+            logger.debug(
+                "Threshold check skipped for %s turn %d: time_remaining_seconds unavailable "
+                "(raw time string: %r)",
+                game.alias, state.turn_number, state.time_remaining,
+            )
             return
 
         guild_cfg = await self.db.get_guild(game.guild_id)
@@ -271,6 +282,10 @@ class GameMonitor(commands.Cog):
             return
         channel = self.bot.get_channel(guild_cfg.report_channel_id)
         if channel is None:
+            logger.warning(
+                "Threshold check skipped for %s: channel %s not found in cache",
+                game.alias, guild_cfg.report_channel_id,
+            )
             return
 
         # Reset flags when the turn has advanced since we last tracked warnings
