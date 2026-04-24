@@ -711,6 +711,74 @@ class GameMonitor(commands.Cog):
 
         await interaction.followup.send("\n".join(lines), ephemeral=True)
 
+    @app_commands.command(name="taunt", description="Taunt a rival nation on behalf of your claimed nation.")
+    @app_commands.describe(
+        game_name="Game name",
+        nation_number="Number of the nation you wish to taunt",
+    )
+    @app_commands.checks.cooldown(1, 300.0)
+    @app_commands.guild_only()
+    async def taunt(
+        self,
+        interaction: discord.Interaction,
+        game_name: str,
+        nation_number: int,
+    ) -> None:
+        game = await self._resolve_game(interaction, game_name)
+        if game is None:
+            return
+
+        all_nations = await self.db.get_nations_for_game(game.id)
+        taunter_nation = next(
+            (n for n in all_nations if n.claimed_by_id == str(interaction.user.id)),
+            None,
+        )
+        if taunter_nation is None:
+            await interaction.response.send_message(
+                f"You must have claimed a nation in **{game_name}** to taunt. Use `/claimnation` first.",
+                ephemeral=True,
+            )
+            return
+
+        target_nation = await self.db.get_nation_by_position(game.id, nation_number)
+        if target_nation is None:
+            await interaction.response.send_message(
+                f"No nation #{nation_number} in **{game_name}**. Use `/status game_name:{game_name}` to see the numbered list.",
+                ephemeral=True,
+            )
+            return
+
+        if target_nation.position == taunter_nation.position:
+            await interaction.response.send_message(
+                "You cannot taunt yourself. Though the self-awareness is admirable.", ephemeral=True
+            )
+            return
+
+        template = await self.db.get_random_taunt()
+        if not template:
+            await interaction.response.send_message("No taunts available.", ephemeral=True)
+            return
+
+        message = template.format(
+            taunter=_short_name(taunter_nation.name),
+            target=_short_name(target_nation.name),
+        )
+        logger.info("Taunt sent: %s -> %s in %s (guild %d)", taunter_nation.name, target_nation.name, game_name, interaction.guild_id)
+        await interaction.response.send_message(message)
+
+    @taunt.error
+    async def taunt_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+        if isinstance(error, app_commands.CommandOnCooldown):
+            remaining = int(error.retry_after)
+            minutes, seconds = divmod(remaining, 60)
+            time_str = f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
+            await interaction.response.send_message(
+                f"The Pantokrator demands patience. You may taunt again in **{time_str}**.",
+                ephemeral=True,
+            )
+        else:
+            raise error
+
     @app_commands.command(name="unflagai", description="Remove the AI flag from a nation.")
     @app_commands.describe(
         game_name="Game name",

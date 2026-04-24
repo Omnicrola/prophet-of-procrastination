@@ -89,10 +89,17 @@ class Database:
                 message   TEXT NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1
             );
+
+            CREATE TABLE IF NOT EXISTS taunt_messages (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                message   TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1
+            );
         """)
         await self._db.commit()
         await self._migrate()
         await self._seed_warning_messages()
+        await self._seed_taunt_messages()
 
     async def _migrate(self) -> None:
         """Add columns introduced after the initial schema without dropping existing data."""
@@ -155,6 +162,53 @@ class Database:
     async def get_random_warning_message(self) -> Optional[str]:
         async with self._db.execute(
             "SELECT message FROM warning_messages WHERE is_active = 1 ORDER BY RANDOM() LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else None
+
+    async def _seed_taunt_messages(self) -> None:
+        async with self._db.execute("SELECT COUNT(*) FROM taunt_messages") as cur:
+            row = await cur.fetchone()
+        if row[0] > 0:
+            return
+
+        messages = [
+            "The Pretender of **{taunter}** has gazed across the astral plane at **{target}** and sighed — not with dread, but with the weary pity one reserves for the hopelessly outmatched.",
+            "Heralds from **{taunter}** arrive at the gates of **{target}** bearing a single scroll. It reads: *nice gem income. It would be a shame if someone were to blood hunt your entire population.*",
+            "The blood mages of **{taunter}** have peered into the dreams of **{target}**'s Pretender. They report it was mostly anxiety dreams about mismanaged provinces.",
+            "**{taunter}** wishes to inform **{target}** that their national bless is being studied by scholars — as an example of what not to do.",
+            "A lone prophet wanders from **{taunter}** into the lands of **{target}**, preaching a simple sermon: *your dominion is weak, your scales are suboptimal, and everyone knows it.*",
+            "The court mages of **{taunter}** have completed an arcane audit of **{target}**'s research output. The results have been forwarded to the Pantokrator under the heading *'cautionary tales'*.",
+            "**{taunter}** has dispatched a gift to **{target}**: a single, unenchanted longsword. Attached is a note: *clearly you need all the help you can get.*",
+            "The scribes of **{taunter}** have completed a military analysis of **{target}**'s forces. It is titled *'How to Lose Gracefully: A Field Guide'*.",
+            "**{taunter}** would like **{target}** to know that their Pretender was seen weeping into a crystal ball. The image it showed was **{target}**'s national economy.",
+            "By royal decree of **{taunter}**, **{target}**'s battle plans have been classified as *'comedy'* and filed accordingly in the royal archives.",
+            "The astrologers of **{taunter}** have read the stars. They say **{target}**'s fate is sealed — most likely by their own incompetent bureaucracy.",
+            "**{taunter}** has sent a cartographer to survey **{target}**'s territory. He returned with a map labelled *'Future Province of {taunter}'*.",
+            "**{taunter}** formally invites **{target}** to inspect their armies. Safety gear will be provided, as the laughter can be quite violent.",
+            "A message arrives from **{taunter}** to **{target}**: *we admire your optimism in continuing. Truly. It is almost moving.*",
+            "The communion masters of **{taunter}** have remotely viewed **{target}**'s gem vaults. They describe the scene as *'sparse'* and *'a little sad'*.",
+            "**{taunter}** has named a latrine in their capital after **{target}**. It is considered an honour in some cultures.",
+            "Official census records from **{taunter}** list **{target}** under the category: *'rivals — theoretical'*.",
+            "The war council of **{taunter}** has voted unanimously that **{target}** poses a *'moderate inconvenience'* at best.",
+            "Word reaches **{target}** from **{taunter}**: *our weakest province militia could hold your capital. We checked.*",
+            "**{taunter}** has commissioned a tapestry depicting the inevitable fall of **{target}**. It is already on display in the great hall.",
+            "The death mages of **{taunter}** report that **{target}**'s soldiers have pre-emptively requested to be raised as undead, as they consider it a career improvement.",
+            "**{taunter}** sends its warmest regards to **{target}**, along with a supply wagon of shovels — for burying their ambitions.",
+            "The Pretender of **{taunter}** has publicly offered **{target}** vassalage. The terms are generous. The implication is not.",
+            "**{taunter}**'s Pretender spent the evening composing a ballad about **{target}**. It is a tragedy. The genre was not chosen ironically.",
+            "Ambassadors from **{taunter}** visited **{target}**'s throne room and returned with a full report. It was filed under *'places we will conquer when we run out of things to do'*.",
+        ]
+        await self._db.executemany(
+            "INSERT INTO taunt_messages (message) VALUES (?)",
+            [(m,) for m in messages],
+        )
+        await self._db.commit()
+        logger.info("Seeded %d taunt messages", len(messages))
+
+    async def get_random_taunt(self) -> Optional[str]:
+        async with self._db.execute(
+            "SELECT message FROM taunt_messages WHERE is_active = 1 ORDER BY RANDOM() LIMIT 1"
         ) as cur:
             row = await cur.fetchone()
         return row[0] if row else None
