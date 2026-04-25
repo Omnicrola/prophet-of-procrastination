@@ -205,7 +205,7 @@ class GameMonitor(commands.Cog):
             await self._notify_new_turn(game, state)
 
         await self._check_thresholds(game, state, db_nations)
-        await self._update_status_embed(game, state, db_nations)
+        await self._update_status_embed(game, state, db_nations, force_new=new_turn)
 
     async def _fetch_state(self, game: GameConfig) -> Optional[GameState]:
         state = await status_scraper.fetch_status(game.status_url, self._http_session)
@@ -232,7 +232,7 @@ class GameMonitor(commands.Cog):
             logger.warning("Failed to send new turn notification: %s", exc)
 
     async def _update_status_embed(
-        self, game: GameConfig, state: GameState, db_nations: list[NationStatus]
+        self, game: GameConfig, state: GameState, db_nations: list[NationStatus], force_new: bool = False
     ) -> None:
         guild_cfg = await self.db.get_guild(game.guild_id)
         if not guild_cfg or not guild_cfg.report_channel_id:
@@ -247,7 +247,7 @@ class GameMonitor(commands.Cog):
 
         embed = _build_status_embed(game, state, db_nations)
 
-        if game.status_message_id:
+        if game.status_message_id and not force_new:
             try:
                 # get_partial_message avoids a fetch (no READ_MESSAGE_HISTORY needed).
                 # edit() raises NotFound if deleted, Forbidden if uneditable.
