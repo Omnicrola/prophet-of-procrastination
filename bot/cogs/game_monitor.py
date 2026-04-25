@@ -230,6 +230,15 @@ class GameMonitor(commands.Cog):
             await channel.send(embed=embed)
         except discord.HTTPException as exc:
             logger.warning("Failed to send new turn notification: %s", exc)
+            return
+
+        user_ids = await self.db.get_notify_user_ids_for_game(game.id)
+        if user_ids:
+            mentions = " ".join(f"<@{uid}>" for uid in user_ids)
+            try:
+                await channel.send(f"🔔 New turn in **{game.alias}**! {mentions}")
+            except discord.HTTPException as exc:
+                logger.warning("Failed to send turn ping for %s: %s", game.alias, exc)
 
     async def _update_status_embed(
         self, game: GameConfig, state: GameState, db_nations: list[NationStatus], force_new: bool = False
@@ -558,7 +567,8 @@ class GameMonitor(commands.Cog):
     @app_commands.describe(
         game_name="Game name",
         nation_number="Nation number shown in /status",
-        use_lethal_force="Override an existing claim",
+        notify="Ping you in chat when a new turn starts",
+        use_lethal_force="Override another player's existing claim",
     )
     @app_commands.guild_only()
     async def claim_nation(
@@ -566,6 +576,7 @@ class GameMonitor(commands.Cog):
         interaction: discord.Interaction,
         game_name: str,
         nation_number: int,
+        notify: bool = False,
         use_lethal_force: bool = False,
     ) -> None:
         game = await self._resolve_game(interaction, game_name)
@@ -588,7 +599,8 @@ class GameMonitor(commands.Cog):
             )
             return
 
-        if nation.claimed_by_id and not use_lethal_force:
+        is_own_claim = nation.claimed_by_id == str(interaction.user.id)
+        if nation.claimed_by_id and not is_own_claim and not use_lethal_force:
             await interaction.response.send_message(
                 f"⚠️ **{_short_name(nation.name)}** is already claimed by **{nation.claimed_by_name}**.\n"
                 f"Add `use_lethal_force:True` to override their claim.",
@@ -596,19 +608,22 @@ class GameMonitor(commands.Cog):
             )
             return
 
-        prev_claimer = nation.claimed_by_name
         await self.db.set_nation_claim(
             game.id, nation_number,
             str(interaction.user.id),
             interaction.user.display_name,
+            notify=notify,
         )
 
-        if prev_claimer:
-            msg = f"Claimed **{_short_name(nation.name)}** in **{game_name}**, overriding **{prev_claimer}**'s claim."
+        notify_str = "You will be pinged on new turns." if notify else "You will not be pinged on new turns."
+        if is_own_claim:
+            msg = f"Updated your claim on **{_short_name(nation.name)}** in **{game_name}**. {notify_str}"
+        elif nation.claimed_by_name:
+            msg = f"Claimed **{_short_name(nation.name)}** in **{game_name}**, overriding **{nation.claimed_by_name}**'s claim. {notify_str}"
         else:
-            msg = f"You've claimed **{_short_name(nation.name)}** in **{game_name}**."
+            msg = f"You've claimed **{_short_name(nation.name)}** in **{game_name}**. {notify_str}"
 
-        logger.info("Nation claimed: %s #%d by %s (guild %d)", game_name, nation_number, interaction.user, interaction.guild_id)
+        logger.info("Nation claimed: %s #%d by %s (guild %d, notify=%s)", game_name, nation_number, interaction.user, interaction.guild_id, notify)
         await interaction.response.send_message(msg)
 
     @app_commands.command(name="unclaim", description="Release your claim on a nation.")

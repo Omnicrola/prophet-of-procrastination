@@ -14,6 +14,7 @@ class NationStatus:
     is_ai: bool = False          # flagged by players; excluded from "waiting on" count
     claimed_by_id: Optional[str] = None    # Discord user snowflake
     claimed_by_name: Optional[str] = None  # Display name at time of claim
+    notify: bool = False                   # ping on new turn
 
 
 @dataclass

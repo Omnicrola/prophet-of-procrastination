@@ -111,6 +111,7 @@ class Database:
             "ALTER TABLE games ADD COLUMN warnings_sent_turn INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE games ADD COLUMN warnings_sent_flags INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE games ADD COLUMN status_message_id INTEGER",
+            "ALTER TABLE nation_status ADD COLUMN notify INTEGER NOT NULL DEFAULT 0",
         ]
         for sql in new_columns:
             try:
@@ -366,7 +367,7 @@ class Database:
 
     async def get_nations_for_game(self, game_id: int) -> list[NationStatus]:
         async with self._db.execute(
-            """SELECT nation_name, position, submitted, is_ai, claimed_by_id, claimed_by_name
+            """SELECT nation_name, position, submitted, is_ai, claimed_by_id, claimed_by_name, notify
                FROM nation_status WHERE game_id = ? ORDER BY position ASC, id ASC""",
             (game_id,),
         ) as cursor:
@@ -375,12 +376,21 @@ class Database:
 
     async def get_nation_by_position(self, game_id: int, position: int) -> Optional[NationStatus]:
         async with self._db.execute(
-            """SELECT nation_name, position, submitted, is_ai, claimed_by_id, claimed_by_name
+            """SELECT nation_name, position, submitted, is_ai, claimed_by_id, claimed_by_name, notify
                FROM nation_status WHERE game_id = ? AND position = ?""",
             (game_id, position),
         ) as cursor:
             row = await cursor.fetchone()
         return _row_to_nation(row) if row else None
+
+    async def get_notify_user_ids_for_game(self, game_id: int) -> list[str]:
+        async with self._db.execute(
+            """SELECT claimed_by_id FROM nation_status
+               WHERE game_id = ? AND notify = 1 AND claimed_by_id IS NOT NULL""",
+            (game_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [row["claimed_by_id"] for row in rows]
 
     async def replace_nations_for_game(
         self, game_id: int, nations: list[NationStatus]
@@ -416,11 +426,12 @@ class Database:
         position: int,
         user_id: Optional[str],
         user_name: Optional[str],
+        notify: bool = False,
     ) -> bool:
         cursor = await self._db.execute(
-            """UPDATE nation_status SET claimed_by_id = ?, claimed_by_name = ?
+            """UPDATE nation_status SET claimed_by_id = ?, claimed_by_name = ?, notify = ?
                WHERE game_id = ? AND position = ?""",
-            (user_id, user_name, game_id, position),
+            (user_id, user_name, int(notify), game_id, position),
         )
         await self._db.commit()
         return cursor.rowcount > 0
@@ -442,6 +453,7 @@ def _row_to_nation(row: aiosqlite.Row) -> NationStatus:
         is_ai=bool(row["is_ai"]),
         claimed_by_id=row["claimed_by_id"],
         claimed_by_name=row["claimed_by_name"],
+        notify=bool(row["notify"]),
     )
 
 
