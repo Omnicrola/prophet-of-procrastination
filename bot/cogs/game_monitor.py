@@ -349,36 +349,29 @@ class GameMonitor(commands.Cog):
     ) -> None:
         is_urgent = label == "1 hour"
         icon = "🚨" if is_urgent else "⏰"
-        color = discord.Color.red() if is_urgent else discord.Color.orange()
-
-        embed = discord.Embed(
-            title=f"{icon} {state.game_name} — Turn {state.turn_number} — Less than {label} remaining!",
-            color=color,
-        )
-        if db_nations:
-            field_name, field_value = _nations_field(db_nations)
-            embed.add_field(name=field_name, value=field_value, inline=False)
-        embed.timestamp = datetime.utcnow()
+        title = f"{icon} {state.game_name} — Turn {state.turn_number} — Less than {label} remaining!"
 
         pending = [n for n in db_nations if not n.is_ai and not n.submitted]
         submitted = [n for n in db_nations if not n.is_ai and n.submitted]
 
-        content = None
         template = await self.db.get_random_warning_message()
         if template:
             try:
-                content = self._format_warning_content(
+                warning_text = self._format_warning_content(
                     template, state.game_name, pending, submitted, ping_players
                 )
             except KeyError:
                 logger.warning("Warning message template has unknown placeholder: %r", template)
-                content = template
+                warning_text = template
+            content = f"{warning_text}\n{title}"
         elif ping_players and pending:
             ping_parts = [f"<@{n.claimed_by_id}>" if n.claimed_by_id else f"*{_short_name(n.name)}*" for n in pending]
-            content = f"{icon} Less than {label} left in **{state.game_name}**! Still waiting on: {', '.join(ping_parts)}"
+            content = f"{title}\nStill waiting on: {', '.join(ping_parts)}"
+        else:
+            content = title
 
         try:
-            await channel.send(content=content, embed=embed)
+            await channel.send(content=content)
         except discord.HTTPException as exc:
             logger.warning("Failed to send threshold warning (%s) for %s: %s", label, game.alias, exc)
 
