@@ -419,6 +419,16 @@ class GameMonitor(commands.Cog):
             )
         return game
 
+    async def _reply_error(self, interaction: discord.Interaction, exc: Exception) -> None:
+        msg = f"Error running command: {type(exc).__name__}"
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except Exception:
+            logger.exception("Failed to send error reply")
+
     # ------------------------------------------------------------------
     # Slash commands
     # ------------------------------------------------------------------
@@ -440,54 +450,62 @@ class GameMonitor(commands.Cog):
         server_ip: Optional[str] = None,
         server_port: Optional[int] = None,
     ) -> None:
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
 
-        game_name = game_name.strip()
-        if not game_name or len(game_name) > 64:
-            await interaction.followup.send("Game name must be 1–64 characters.", ephemeral=True)
-            return
+            game_name = game_name.strip()
+            if not game_name or len(game_name) > 64:
+                await interaction.followup.send("Game name must be 1–64 characters.", ephemeral=True)
+                return
 
-        alias = game_name.lower()
-        resolved_url = status_url.strip() if status_url else illwinter_status_url(game_name)
+            alias = game_name.lower()
+            resolved_url = status_url.strip() if status_url else illwinter_status_url(game_name)
 
-        if await self.db.get_game(interaction.guild_id, alias):
-            await interaction.followup.send(
-                f"A game named `{game_name}` is already monitored. Remove it first with `/removegame`.",
-                ephemeral=True,
+            if await self.db.get_game(interaction.guild_id, alias):
+                await interaction.followup.send(
+                    f"A game named `{game_name}` is already monitored. Remove it first with `/removegame`.",
+                    ephemeral=True,
+                )
+                return
+
+            game_id = await self.db.add_game(
+                guild_id=interaction.guild_id,
+                alias=alias,
+                status_url=resolved_url,
+                server_ip=server_ip,
+                server_port=server_port,
             )
-            return
 
-        game_id = await self.db.add_game(
-            guild_id=interaction.guild_id,
-            alias=alias,
-            status_url=resolved_url,
-            server_ip=server_ip,
-            server_port=server_port,
-        )
-
-        hosting = "Illwinter" if not status_url else "custom URL"
-        logger.info("Game added: %s (guild %d, id %d, %s)", game_name, interaction.guild_id, game_id, hosting)
-        parts = [
-            f"Game **{game_name}** added and monitoring started.",
-            f"Status URL ({hosting}): `{resolved_url}`",
-        ]
-        if server_ip:
-            parts.append(f"TCP fallback: `{server_ip}:{server_port or '?'}`")
-        parts.append("Use `/setchannel` to set where status reports are posted.")
-        await interaction.followup.send("\n".join(parts), ephemeral=True)
+            hosting = "Illwinter" if not status_url else "custom URL"
+            logger.info("Game added: %s (guild %d, id %d, %s)", game_name, interaction.guild_id, game_id, hosting)
+            parts = [
+                f"Game **{game_name}** added and monitoring started.",
+                f"Status URL ({hosting}): `{resolved_url}`",
+            ]
+            if server_ip:
+                parts.append(f"TCP fallback: `{server_ip}:{server_port or '?'}`")
+            parts.append("Use `/setchannel` to set where status reports are posted.")
+            await interaction.followup.send("\n".join(parts), ephemeral=True)
+        except Exception as exc:
+            logger.exception("Error in /addgame")
+            await self._reply_error(interaction, exc)
 
     @app_commands.command(name="removegame", description="Stop monitoring a game.")
     @app_commands.describe(game_name="Name of the game to remove")
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.guild_only()
     async def remove_game(self, interaction: discord.Interaction, game_name: str) -> None:
-        await interaction.response.defer(ephemeral=True)
-        removed = await self.db.remove_game(interaction.guild_id, game_name.strip().lower())
-        if removed:
-            logger.info("Game removed: %s (guild %d)", game_name, interaction.guild_id)
-            await interaction.followup.send(f"Game **{game_name}** removed.", ephemeral=True)
-        else:
-            await interaction.followup.send(f"No active game named `{game_name}`.", ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+            removed = await self.db.remove_game(interaction.guild_id, game_name.strip().lower())
+            if removed:
+                logger.info("Game removed: %s (guild %d)", game_name, interaction.guild_id)
+                await interaction.followup.send(f"Game **{game_name}** removed.", ephemeral=True)
+            else:
+                await interaction.followup.send(f"No active game named `{game_name}`.", ephemeral=True)
+        except Exception as exc:
+            logger.exception("Error in /removegame")
+            await self._reply_error(interaction, exc)
 
     @app_commands.command(name="status", description="Fetch and display current game status.")
     @app_commands.describe(
@@ -501,67 +519,79 @@ class GameMonitor(commands.Cog):
         game_name: Optional[str] = None,
         broadcast: bool = False,
     ) -> None:
-        await interaction.response.defer(ephemeral=not broadcast)
+        try:
+            await interaction.response.defer(ephemeral=not broadcast)
 
-        games = (
-            [await self.db.get_game(interaction.guild_id, game_name.strip().lower())]
-            if game_name
-            else await self.db.get_games_for_guild(interaction.guild_id)
-        )
-        games = [g for g in games if g is not None]
+            games = (
+                [await self.db.get_game(interaction.guild_id, game_name.strip().lower())]
+                if game_name
+                else await self.db.get_games_for_guild(interaction.guild_id)
+            )
+            games = [g for g in games if g is not None]
 
-        if not games:
-            msg = f"No active game named `{game_name}`." if game_name else "No games are being monitored."
-            await interaction.followup.send(msg, ephemeral=not broadcast)
-            return
+            if not games:
+                msg = f"No active game named `{game_name}`." if game_name else "No games are being monitored."
+                await interaction.followup.send(msg, ephemeral=not broadcast)
+                return
 
-        for game in games:
-            state = await self._fetch_state(game)
-            if state is None:
-                await interaction.followup.send(
-                    f"Could not fetch status for **{game.alias}**. The server may be offline.",
-                    ephemeral=not broadcast,
-                )
-                continue
-            # Save fresh data so DB nations have current submitted status
-            await self.db.update_game_state(game.id, state.turn_number, datetime.utcnow())
-            if state.nations:
-                await self.db.replace_nations_for_game(game.id, state.nations)
-            db_nations = await self.db.get_nations_for_game(game.id)
-            embed = _build_status_embed(game, state, db_nations)
-            message = await interaction.followup.send(embed=embed, ephemeral=not broadcast, wait=True)
-            if broadcast:
-                await self.db.set_status_message_id(game.id, message.id)
+            for game in games:
+                state = await self._fetch_state(game)
+                if state is None:
+                    await interaction.followup.send(
+                        f"Could not fetch status for **{game.alias}**. The server may be offline.",
+                        ephemeral=not broadcast,
+                    )
+                    continue
+                # Save fresh data so DB nations have current submitted status
+                await self.db.update_game_state(game.id, state.turn_number, datetime.utcnow())
+                if state.nations:
+                    await self.db.replace_nations_for_game(game.id, state.nations)
+                db_nations = await self.db.get_nations_for_game(game.id)
+                embed = _build_status_embed(game, state, db_nations)
+                message = await interaction.followup.send(embed=embed, ephemeral=not broadcast, wait=True)
+                if broadcast:
+                    await self.db.set_status_message_id(game.id, message.id)
+        except Exception as exc:
+            logger.exception("Error in /status")
+            await self._reply_error(interaction, exc)
 
     @app_commands.command(name="setchannel", description="Set this channel as the reporting channel.")
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.guild_only()
     async def set_channel(self, interaction: discord.Interaction) -> None:
-        await self.db.upsert_guild(interaction.guild_id, report_channel_id=interaction.channel_id)
-        logger.info("Report channel set: guild %d -> channel %d", interaction.guild_id, interaction.channel_id)
-        await interaction.response.send_message(
-            f"Status reports will now be posted in <#{interaction.channel_id}>.", ephemeral=True
-        )
+        try:
+            await self.db.upsert_guild(interaction.guild_id, report_channel_id=interaction.channel_id)
+            logger.info("Report channel set: guild %d -> channel %d", interaction.guild_id, interaction.channel_id)
+            await interaction.response.send_message(
+                f"Status reports will now be posted in <#{interaction.channel_id}>.", ephemeral=True
+            )
+        except Exception as exc:
+            logger.exception("Error in /setchannel")
+            await self._reply_error(interaction, exc)
 
     @app_commands.command(name="listgames", description="List all monitored games in this server.")
     @app_commands.guild_only()
     async def list_games(self, interaction: discord.Interaction) -> None:
-        games = await self.db.get_games_for_guild(interaction.guild_id)
-        if not games:
-            await interaction.response.send_message("No games are currently being monitored.", ephemeral=True)
-            return
+        try:
+            games = await self.db.get_games_for_guild(interaction.guild_id)
+            if not games:
+                await interaction.response.send_message("No games are currently being monitored.", ephemeral=True)
+                return
 
-        embed = discord.Embed(title="Monitored Games", color=discord.Color.blurple())
-        for game in games:
-            last_turn = str(game.last_turn_number) if game.last_turn_number else "unknown"
-            value_parts = [f"Status URL: `{game.status_url}`", f"Last known turn: {last_turn}"]
-            if game.server_ip:
-                value_parts.append(f"TCP: `{game.server_ip}:{game.server_port}`")
-            if game.consecutive_failures > 0:
-                value_parts.append(f"⚠️ {game.consecutive_failures} consecutive failures")
-            embed.add_field(name=game.alias, value="\n".join(value_parts), inline=False)
+            embed = discord.Embed(title="Monitored Games", color=discord.Color.blurple())
+            for game in games:
+                last_turn = str(game.last_turn_number) if game.last_turn_number else "unknown"
+                value_parts = [f"Status URL: `{game.status_url}`", f"Last known turn: {last_turn}"]
+                if game.server_ip:
+                    value_parts.append(f"TCP: `{game.server_ip}:{game.server_port}`")
+                if game.consecutive_failures > 0:
+                    value_parts.append(f"⚠️ {game.consecutive_failures} consecutive failures")
+                embed.add_field(name=game.alias, value="\n".join(value_parts), inline=False)
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as exc:
+            logger.exception("Error in /listgames")
+            await self._reply_error(interaction, exc)
 
     @app_commands.command(name="claimnation", description="Claim a nation as your player slot.")
     @app_commands.describe(
@@ -579,52 +609,56 @@ class GameMonitor(commands.Cog):
         notify: bool = False,
         use_lethal_force: bool = False,
     ) -> None:
-        game = await self._resolve_game(interaction, game_name)
-        if game is None:
-            return
+        try:
+            game = await self._resolve_game(interaction, game_name)
+            if game is None:
+                return
 
-        nation = await self.db.get_nation_by_position(game.id, nation_number)
-        if nation is None:
-            await interaction.response.send_message(
-                f"No nation #{nation_number} in **{game_name}**. "
-                f"Use `/status game_name:{game_name}` to see the numbered list.",
-                ephemeral=True,
+            nation = await self.db.get_nation_by_position(game.id, nation_number)
+            if nation is None:
+                await interaction.response.send_message(
+                    f"No nation #{nation_number} in **{game_name}**. "
+                    f"Use `/status game_name:{game_name}` to see the numbered list.",
+                    ephemeral=True,
+                )
+                return
+
+            if nation.is_ai:
+                await interaction.response.send_message(
+                    f"**{_short_name(nation.name)}** is flagged as AI-controlled and cannot be claimed.",
+                    ephemeral=True,
+                )
+                return
+
+            is_own_claim = nation.claimed_by_id == str(interaction.user.id)
+            if nation.claimed_by_id and not is_own_claim and not use_lethal_force:
+                await interaction.response.send_message(
+                    f"⚠️ **{_short_name(nation.name)}** is already claimed by **{nation.claimed_by_name}**.\n"
+                    f"Add `use_lethal_force:True` to override their claim.",
+                    ephemeral=True,
+                )
+                return
+
+            await self.db.set_nation_claim(
+                game.id, nation_number,
+                str(interaction.user.id),
+                interaction.user.display_name,
+                notify=notify,
             )
-            return
 
-        if nation.is_ai:
-            await interaction.response.send_message(
-                f"**{_short_name(nation.name)}** is flagged as AI-controlled and cannot be claimed.",
-                ephemeral=True,
-            )
-            return
+            notify_str = "You will be pinged on new turns." if notify else "You will not be pinged on new turns."
+            if is_own_claim:
+                msg = f"Updated your claim on **{_short_name(nation.name)}** in **{game_name}**. {notify_str}"
+            elif nation.claimed_by_name:
+                msg = f"Claimed **{_short_name(nation.name)}** in **{game_name}**, overriding **{nation.claimed_by_name}**'s claim. {notify_str}"
+            else:
+                msg = f"You've claimed **{_short_name(nation.name)}** in **{game_name}**. {notify_str}"
 
-        is_own_claim = nation.claimed_by_id == str(interaction.user.id)
-        if nation.claimed_by_id and not is_own_claim and not use_lethal_force:
-            await interaction.response.send_message(
-                f"⚠️ **{_short_name(nation.name)}** is already claimed by **{nation.claimed_by_name}**.\n"
-                f"Add `use_lethal_force:True` to override their claim.",
-                ephemeral=True,
-            )
-            return
-
-        await self.db.set_nation_claim(
-            game.id, nation_number,
-            str(interaction.user.id),
-            interaction.user.display_name,
-            notify=notify,
-        )
-
-        notify_str = "You will be pinged on new turns." if notify else "You will not be pinged on new turns."
-        if is_own_claim:
-            msg = f"Updated your claim on **{_short_name(nation.name)}** in **{game_name}**. {notify_str}"
-        elif nation.claimed_by_name:
-            msg = f"Claimed **{_short_name(nation.name)}** in **{game_name}**, overriding **{nation.claimed_by_name}**'s claim. {notify_str}"
-        else:
-            msg = f"You've claimed **{_short_name(nation.name)}** in **{game_name}**. {notify_str}"
-
-        logger.info("Nation claimed: %s #%d by %s (guild %d, notify=%s)", game_name, nation_number, interaction.user, interaction.guild_id, notify)
-        await interaction.response.send_message(msg)
+            logger.info("Nation claimed: %s #%d by %s (guild %d, notify=%s)", game_name, nation_number, interaction.user, interaction.guild_id, notify)
+            await interaction.response.send_message(msg)
+        except Exception as exc:
+            logger.exception("Error in /claimnation")
+            await self._reply_error(interaction, exc)
 
     @app_commands.command(name="unclaim", description="Release your claim on a nation.")
     @app_commands.describe(
@@ -638,34 +672,38 @@ class GameMonitor(commands.Cog):
         game_name: str,
         nation_number: int,
     ) -> None:
-        game = await self._resolve_game(interaction, game_name)
-        if game is None:
-            return
+        try:
+            game = await self._resolve_game(interaction, game_name)
+            if game is None:
+                return
 
-        nation = await self.db.get_nation_by_position(game.id, nation_number)
-        if nation is None:
-            await interaction.response.send_message(f"No nation #{nation_number} in **{game_name}**.", ephemeral=True)
-            return
+            nation = await self.db.get_nation_by_position(game.id, nation_number)
+            if nation is None:
+                await interaction.response.send_message(f"No nation #{nation_number} in **{game_name}**.", ephemeral=True)
+                return
 
-        if not nation.claimed_by_id:
-            await interaction.response.send_message(f"**{_short_name(nation.name)}** has no claim to release.", ephemeral=True)
-            return
+            if not nation.claimed_by_id:
+                await interaction.response.send_message(f"**{_short_name(nation.name)}** has no claim to release.", ephemeral=True)
+                return
 
-        is_own = nation.claimed_by_id == str(interaction.user.id)
-        is_admin = interaction.permissions.manage_guild
+            is_own = nation.claimed_by_id == str(interaction.user.id)
+            is_admin = interaction.permissions.manage_guild
 
-        if not is_own and not is_admin:
+            if not is_own and not is_admin:
+                await interaction.response.send_message(
+                    f"You can only release your own claims. "
+                    f"**{_short_name(nation.name)}** is claimed by **{nation.claimed_by_name}**.",
+                    ephemeral=True,
+                )
+                return
+
+            await self.db.set_nation_claim(game.id, nation_number, None, None)
             await interaction.response.send_message(
-                f"You can only release your own claims. "
-                f"**{_short_name(nation.name)}** is claimed by **{nation.claimed_by_name}**.",
-                ephemeral=True,
+                f"Claim on **{_short_name(nation.name)}** in **{game_name}** released.", ephemeral=True
             )
-            return
-
-        await self.db.set_nation_claim(game.id, nation_number, None, None)
-        await interaction.response.send_message(
-            f"Claim on **{_short_name(nation.name)}** in **{game_name}** released.", ephemeral=True
-        )
+        except Exception as exc:
+            logger.exception("Error in /unclaim")
+            await self._reply_error(interaction, exc)
 
     @app_commands.command(name="flagai", description="Flag one or more nations as AI-controlled (excluded from 'waiting on' count).")
     @app_commands.describe(
@@ -679,52 +717,56 @@ class GameMonitor(commands.Cog):
         game_name: str,
         nation_numbers: str,
     ) -> None:
-        game = await self._resolve_game(interaction, game_name)
-        if game is None:
-            return
-
         try:
-            positions = [int(p.strip()) for p in nation_numbers.split(",") if p.strip()]
-        except ValueError:
-            await interaction.response.send_message(
-                "Nation numbers must be integers separated by commas (e.g. `1,3,5`).", ephemeral=True
-            )
-            return
+            game = await self._resolve_game(interaction, game_name)
+            if game is None:
+                return
 
-        if not positions:
-            await interaction.response.send_message("Please provide at least one nation number.", ephemeral=True)
-            return
+            try:
+                positions = [int(p.strip()) for p in nation_numbers.split(",") if p.strip()]
+            except ValueError:
+                await interaction.response.send_message(
+                    "Nation numbers must be integers separated by commas (e.g. `1,3,5`).", ephemeral=True
+                )
+                return
 
-        await interaction.response.defer(ephemeral=True)
+            if not positions:
+                await interaction.response.send_message("Please provide at least one nation number.", ephemeral=True)
+                return
 
-        flagged, already_ai, not_found = [], [], []
-        for pos in positions:
-            nation = await self.db.get_nation_by_position(game.id, pos)
-            if nation is None:
-                not_found.append(str(pos))
-                continue
-            if nation.is_ai:
-                already_ai.append(_short_name(nation.name))
-                continue
-            await self.db.set_nation_ai(game.id, pos, True)
-            if nation.claimed_by_id:
-                await self.db.set_nation_claim(game.id, pos, None, None)
-            flagged.append(_short_name(nation.name))
+            await interaction.response.defer(ephemeral=True)
 
-        logger.info("Nations flagged AI: %s %s (guild %d)", game_name, positions, interaction.guild_id)
+            flagged, already_ai, not_found = [], [], []
+            for pos in positions:
+                nation = await self.db.get_nation_by_position(game.id, pos)
+                if nation is None:
+                    not_found.append(str(pos))
+                    continue
+                if nation.is_ai:
+                    already_ai.append(_short_name(nation.name))
+                    continue
+                await self.db.set_nation_ai(game.id, pos, True)
+                if nation.claimed_by_id:
+                    await self.db.set_nation_claim(game.id, pos, None, None)
+                flagged.append(_short_name(nation.name))
 
-        lines = []
-        if flagged:
-            names = ", ".join(f"**{n}**" for n in flagged)
-            lines.append(f"Flagged as AI in **{game_name}**: {names}. They will appear with 🤖 and won't count toward pending turns.")
-        if already_ai:
-            names = ", ".join(f"**{n}**" for n in already_ai)
-            lines.append(f"Already flagged as AI: {names}.")
-        if not_found:
-            nums = ", ".join(f"`#{n}`" for n in not_found)
-            lines.append(f"Not found: {nums} — use `/status game_name:{game_name}` to see the numbered list.")
+            logger.info("Nations flagged AI: %s %s (guild %d)", game_name, positions, interaction.guild_id)
 
-        await interaction.followup.send("\n".join(lines), ephemeral=True)
+            lines = []
+            if flagged:
+                names = ", ".join(f"**{n}**" for n in flagged)
+                lines.append(f"Flagged as AI in **{game_name}**: {names}. They will appear with 🤖 and won't count toward pending turns.")
+            if already_ai:
+                names = ", ".join(f"**{n}**" for n in already_ai)
+                lines.append(f"Already flagged as AI: {names}.")
+            if not_found:
+                nums = ", ".join(f"`#{n}`" for n in not_found)
+                lines.append(f"Not found: {nums} — use `/status game_name:{game_name}` to see the numbered list.")
+
+            await interaction.followup.send("\n".join(lines), ephemeral=True)
+        except Exception as exc:
+            logger.exception("Error in /flagai")
+            await self._reply_error(interaction, exc)
 
     @app_commands.command(name="taunt", description="Taunt a rival nation on behalf of your claimed nation.")
     @app_commands.describe(
@@ -739,47 +781,51 @@ class GameMonitor(commands.Cog):
         game_name: str,
         nation_number: int,
     ) -> None:
-        game = await self._resolve_game(interaction, game_name)
-        if game is None:
-            return
+        try:
+            game = await self._resolve_game(interaction, game_name)
+            if game is None:
+                return
 
-        all_nations = await self.db.get_nations_for_game(game.id)
-        taunter_nation = next(
-            (n for n in all_nations if n.claimed_by_id == str(interaction.user.id)),
-            None,
-        )
-        if taunter_nation is None:
-            await interaction.response.send_message(
-                f"You must have claimed a nation in **{game_name}** to taunt. Use `/claimnation` first.",
-                ephemeral=True,
+            all_nations = await self.db.get_nations_for_game(game.id)
+            taunter_nation = next(
+                (n for n in all_nations if n.claimed_by_id == str(interaction.user.id)),
+                None,
             )
-            return
+            if taunter_nation is None:
+                await interaction.response.send_message(
+                    f"You must have claimed a nation in **{game_name}** to taunt. Use `/claimnation` first.",
+                    ephemeral=True,
+                )
+                return
 
-        target_nation = await self.db.get_nation_by_position(game.id, nation_number)
-        if target_nation is None:
-            await interaction.response.send_message(
-                f"No nation #{nation_number} in **{game_name}**. Use `/status game_name:{game_name}` to see the numbered list.",
-                ephemeral=True,
+            target_nation = await self.db.get_nation_by_position(game.id, nation_number)
+            if target_nation is None:
+                await interaction.response.send_message(
+                    f"No nation #{nation_number} in **{game_name}**. Use `/status game_name:{game_name}` to see the numbered list.",
+                    ephemeral=True,
+                )
+                return
+
+            if target_nation.position == taunter_nation.position:
+                await interaction.response.send_message(
+                    "You cannot taunt yourself. Though the self-awareness is admirable.", ephemeral=True
+                )
+                return
+
+            template = await self.db.get_random_taunt()
+            if not template:
+                await interaction.response.send_message("No taunts available.", ephemeral=True)
+                return
+
+            message = template.format(
+                taunter=_short_name(taunter_nation.name),
+                target=_short_name(target_nation.name),
             )
-            return
-
-        if target_nation.position == taunter_nation.position:
-            await interaction.response.send_message(
-                "You cannot taunt yourself. Though the self-awareness is admirable.", ephemeral=True
-            )
-            return
-
-        template = await self.db.get_random_taunt()
-        if not template:
-            await interaction.response.send_message("No taunts available.", ephemeral=True)
-            return
-
-        message = template.format(
-            taunter=_short_name(taunter_nation.name),
-            target=_short_name(target_nation.name),
-        )
-        logger.info("Taunt sent: %s -> %s in %s (guild %d)", taunter_nation.name, target_nation.name, game_name, interaction.guild_id)
-        await interaction.response.send_message(message)
+            logger.info("Taunt sent: %s -> %s in %s (guild %d)", taunter_nation.name, target_nation.name, game_name, interaction.guild_id)
+            await interaction.response.send_message(message)
+        except Exception as exc:
+            logger.exception("Error in /taunt")
+            await self._reply_error(interaction, exc)
 
     @taunt.error
     async def taunt_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
@@ -806,22 +852,26 @@ class GameMonitor(commands.Cog):
         game_name: str,
         nation_number: int,
     ) -> None:
-        game = await self._resolve_game(interaction, game_name)
-        if game is None:
-            return
+        try:
+            game = await self._resolve_game(interaction, game_name)
+            if game is None:
+                return
 
-        nation = await self.db.get_nation_by_position(game.id, nation_number)
-        if nation is None:
-            await interaction.response.send_message(f"No nation #{nation_number} in **{game_name}**.", ephemeral=True)
-            return
+            nation = await self.db.get_nation_by_position(game.id, nation_number)
+            if nation is None:
+                await interaction.response.send_message(f"No nation #{nation_number} in **{game_name}**.", ephemeral=True)
+                return
 
-        if not nation.is_ai:
+            if not nation.is_ai:
+                await interaction.response.send_message(
+                    f"**{_short_name(nation.name)}** is not flagged as AI.", ephemeral=True
+                )
+                return
+
+            await self.db.set_nation_ai(game.id, nation_number, False)
             await interaction.response.send_message(
-                f"**{_short_name(nation.name)}** is not flagged as AI.", ephemeral=True
+                f"AI flag removed from **{_short_name(nation.name)}** in **{game_name}**.", ephemeral=True
             )
-            return
-
-        await self.db.set_nation_ai(game.id, nation_number, False)
-        await interaction.response.send_message(
-            f"AI flag removed from **{_short_name(nation.name)}** in **{game_name}**.", ephemeral=True
-        )
+        except Exception as exc:
+            logger.exception("Error in /unflagai")
+            await self._reply_error(interaction, exc)
