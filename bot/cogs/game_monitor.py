@@ -413,7 +413,7 @@ class GameMonitor(commands.Cog):
         return game
 
     async def _reply_error(self, interaction: discord.Interaction, exc: Exception) -> None:
-        msg = f"Error running command: {type(exc).__name__}"
+        msg = f"Error running command: {type(exc).__name__}. It's probably Kevin's fault."
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(msg, ephemeral=True)
