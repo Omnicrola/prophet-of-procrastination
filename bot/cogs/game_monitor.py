@@ -478,6 +478,14 @@ class GameMonitor(commands.Cog):
             if server_ip:
                 parts.append(f"TCP fallback: `{server_ip}:{server_port or '?'}`")
             parts.append("Use `/setchannel` to set where status reports are posted.")
+
+            state = await status_scraper.fetch_status(resolved_url, self._http_session)
+            if state is None:
+                parts.append(
+                    f"\n⚠️ Could not reach the status page right now. "
+                    f"The game name may have a typo, or the game may not have started yet."
+                )
+
             await interaction.followup.send("\n".join(parts), ephemeral=True)
         except Exception as exc:
             logger.exception("Error in /addgame")
