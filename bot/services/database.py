@@ -270,6 +270,21 @@ class Database:
         server_port: Optional[int] = None,
     ) -> int:
         await self.upsert_guild(guild_id)
+        async with self._db.execute(
+            "SELECT id FROM games WHERE guild_id = ? AND alias = ?",
+            (guild_id, alias),
+        ) as cursor:
+            existing = await cursor.fetchone()
+        if existing:
+            await self._db.execute(
+                """UPDATE games SET status_url = ?, server_ip = ?, server_port = ?,
+                   is_active = 1, consecutive_failures = 0, failure_notified = 0,
+                   warnings_sent_turn = 0, warnings_sent_flags = 0, status_message_id = NULL
+                   WHERE id = ?""",
+                (status_url, server_ip, server_port, existing["id"]),
+            )
+            await self._db.commit()
+            return existing["id"]
         cursor = await self._db.execute(
             """INSERT INTO games (guild_id, alias, status_url, server_ip, server_port)
                VALUES (?, ?, ?, ?, ?)""",

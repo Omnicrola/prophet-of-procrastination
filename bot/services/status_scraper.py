@@ -32,7 +32,7 @@ _TIMEOUT = aiohttp.ClientTimeout(total=10)
 # ── Illwinter format ────────────────────────────────────────────────────────
 # Header cell text: "KevSunday, turn 26 (time left: 22 hours and 49 minutes)"
 _IW_HEADER_RE = re.compile(
-    r"^(.+?),\s*turn\s+(\d+)\s*\(time left:\s*(.+?)\)\s*$",
+    r"^(.+?),\s*turn\s+(\d+)(?:\s*\(time left:\s*(.+?)\))?\s*$",
     re.IGNORECASE,
 )
 # Time string inside the header: "1 day and 3 hours", "22 hours and 49 minutes", "30 minutes", etc.
@@ -131,8 +131,8 @@ def _parse_illwinter(soup: BeautifulSoup) -> Optional[GameState]:
 
     game_name = m.group(1).strip()
     turn_number = int(m.group(2))
-    time_str_raw = m.group(3).strip()
-    time_label, time_seconds = _parse_illwinter_time(time_str_raw)
+    time_str_raw = m.group(3).strip() if m.group(3) else None
+    time_label, time_seconds = _parse_illwinter_time(time_str_raw) if time_str_raw else (None, None)
 
     nations: list[NationStatus] = []
     for row in soup.find_all("tr"):
