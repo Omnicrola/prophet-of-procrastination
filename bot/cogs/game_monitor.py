@@ -4,6 +4,7 @@ GameMonitor cog — slash commands and the background polling loop.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -115,6 +116,9 @@ def _build_new_turn_embed(game: GameConfig, state: GameState) -> discord.Embed:
         color=discord.Color.blue(),
     )
     time_str = state.time_remaining or _format_time(state.time_remaining_seconds)
+    if state.time_remaining_seconds is not None:
+        deadline_ts = int(time.time()) + state.time_remaining_seconds
+        time_str = f"{time_str} (auto-advance <t:{deadline_ts}:t>)"
     embed.add_field(name="⏰ Time Remaining", value=time_str or "unknown", inline=True)
     embed.add_field(name="Game", value=game.alias, inline=True)
     embed.timestamp = datetime.utcnow()
@@ -355,6 +359,9 @@ class GameMonitor(commands.Cog):
             title=f"{icon} {state.game_name} — Turn {state.turn_number} — Less than {label} remaining!",
             color=color,
         )
+        if state.time_remaining_seconds is not None:
+            deadline_ts = int(time.time()) + state.time_remaining_seconds
+            embed.description = f"Auto-advance at <t:{deadline_ts}:t>"
         if db_nations:
             field_name, field_value = _nations_field(db_nations)
             embed.add_field(name=field_name, value=field_value, inline=False)
